@@ -4,6 +4,8 @@
 //
 
 #include <algorithm>
+#include <eigen3/Eigen/Core>
+#include <eigen3/Eigen/Dense>
 #include <vector>
 #include "rasterizer.hpp"
 #include <opencv2/opencv.hpp>
@@ -115,43 +117,40 @@ void rst::rasterizer::draw(pos_buf_id pos_buffer, ind_buf_id ind_buffer, col_buf
 
 //Screen space rasterization
 void rst::rasterizer::rasterize_triangle(const Triangle& t) {
-    auto v = t.toVector4();
-    auto v1 = v[0];
-    auto v2 = v[1];
-    auto v3 = v[2];
     
-    // TODO : Find out the bounding box of current triangle.
-    // iterate through the pixel and find if the current pixel is inside the triangle
-    auto x_min = std::min(std::min(v1.x(), v2.x()), v3.x());
-    auto x_max = std::max(std::max(v1.x(), v2.x()), v3.x());
-    auto y_min = std::min(std::min(v1.y(), v2.y()), v3.y());
-    auto y_max = std::max(std::max(v1.y(), v2.y()), v3.y());
-    // If so, use the following code to get the interpolated z value.
-    // auto[alpha, beta, gamma] = computeBarycentric2D(x, y, t.v);
-    // float w_reciprocal = 1.0/(alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
-    // float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
-    // z_interpolated *= w_reciprocal;
+    // 1. 直接计算包围盒
+    int x_min = static_cast<int>(std::floor(std::min({t.v[0].x(), t.v[1].x(), t.v[2].x()})));
+    int x_max = static_cast<int>(std::ceil(std::max({t.v[0].x(), t.v[1].x(), t.v[2].x()})));
+    int y_min = static_cast<int>(std::floor(std::min({t.v[0].y(), t.v[1].y(), t.v[2].y()})));
+    int y_max = static_cast<int>(std::ceil(std::max({t.v[0].y(), t.v[1].y(), t.v[2].y()})));
 
-
-    // TODO : set the current pixel (use the set_pixel function) to the color of the triangle (use getColor function) if it should be painted.
-    for(int x=x_min; x<=x_max; x++)
+    // 2. 遍历包围盒
+    for (int x = x_min; x <= x_max; x++)
     {
-        for(int y=y_min; y<=y_max; y++)
+        for (int y = y_min; y <= y_max; y++)
         {
-            // Check if the pixel is inside the triangle
-            if(!insideTriangle(x, y, t.v)){
+            // 使用像素中心点 (x + 0.5, y + 0.5) 进行采样，抗锯齿和防止缝隙
+            float pixel_x = x + 0.5f;
+            float pixel_y = y + 0.5f;
+
+            // 3. 检查像素中心是否在三角形内
+            if (!insideTriangle(pixel_x, pixel_y, t.v)) {
                 continue;
             }
-            auto[alpha, beta, gamma] = computeBarycentric2D(x, y, t.v);
-            float w_reciprocal = 1.0/(alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
-            float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
-            z_interpolated *= w_reciprocal;
 
-            if(z_interpolated < depth_buf[get_index(x,y)]){
-                depth_buf[get_index(x,y)] = z_interpolated;
-                set_pixel(Vector3f(x, y, 1), t.getColor());
-            }
+            // 4. 计算重心坐标
+            auto [alpha, beta, gamma] = computeBarycentric2D(pixel_x, pixel_y, t.v);
             
+            // 5. 插值计算像素的深度值
+            float z_interpolated = alpha * t.v[0].z() + beta * t.v[1].z() + gamma * t.v[2].z();
+
+            // 6. 深度测试与更新
+            int buf_idx = get_index(x, y);
+            if (z_interpolated < depth_buf[buf_idx]) {
+                depth_buf[buf_idx] = z_interpolated;
+                
+                set_pixel(Eigen::Vector3f(static_cast<float>(x), static_cast<float>(y), 1.0f), t.getColor());
+            }
         }
     }
 }
